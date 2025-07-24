@@ -155,6 +155,7 @@ class QuarkW4A4MXFp4MoEMethod(QuarkMoEMethod):
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
         no_combine: bool = False,
+        num_fused_shared_experts: int = 0,
         correction_bias: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
@@ -172,6 +173,7 @@ class QuarkW4A4MXFp4MoEMethod(QuarkMoEMethod):
             renormalize=renormalize,
             topk_group=topk_group,
             num_expert_group=num_expert_group,
+            num_fused_shared_experts=num_fused_shared_experts,
             custom_routing_function=custom_routing_function,
             correction_bias=correction_bias,
             routed_scaling_factor=routed_scaling_factor

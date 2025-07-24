@@ -16,9 +16,7 @@ from sglang.srt.utils import get_device_capability
 from sglang.srt.layers.quantization.kv_cache import BaseKVCacheMethod
 
 from sglang.srt.layers.radix_attention import RadixAttention
-from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
 
-from sglang.srt.layers.quantization.quark.quark_moe import QuarkMoEMethod
 
 from typing import List
 
@@ -59,6 +57,8 @@ class QuarkConfig(QuantizationConfig):
 
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> Optional["QuantizeMethodBase"]:
+        from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
+        from sglang.srt.layers.quantization.quark.quark_moe import QuarkMoEMethod
         # Check if the layer is skipped for quantization.
         exclude_layers = cast(list[str], self.quant_config.get("exclude"))
         if should_ignore_layer(prefix,
