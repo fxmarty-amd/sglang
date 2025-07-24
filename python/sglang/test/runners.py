@@ -26,6 +26,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForVision2Seq,
     AutoProcessor,
+    GenerationConfig,
 )
 
 from sglang.srt.entrypoints.engine import Engine
@@ -384,13 +385,17 @@ class HFRunner:
                 model = base_model
 
             outputs = model.generate(
-                input_ids,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
-                max_new_tokens=max_new_tokens,
-                return_dict_in_generate=True,
-                output_scores=(not output_str_only),
+                input_ids=input_ids,
+                generation_config=GenerationConfig(
+                    do_sample=False,
+                    temperature=None,
+                    top_p=None,
+                    max_new_tokens=max_new_tokens,
+                    return_dict_in_generate=True,
+                    output_scores=(not output_str_only),
+                    # make sure to disable compile
+                    disable_compile=True,
+                ),
             )
 
             text = tokenizer.decode(
@@ -452,6 +457,7 @@ class SRTRunner:
         torch_dtype: Union[torch.dtype, str],
         model_type: str,
         tp_size: int = 1,
+        impl: str = "auto",
         port: int = DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
         lora_paths: List[str] = None,
         max_loras_per_batch: int = 4,
@@ -472,6 +478,7 @@ class SRTRunner:
         speculative_num_draft_tokens: Optional[int] = None,
         disable_overlap_schedule: bool = False,
         disable_custom_all_reduce: bool = False,
+        torchao_config: Optional[str] = None,
         context_length: Optional[int] = None,
     ):
         self.model_type = model_type
@@ -491,6 +498,8 @@ class SRTRunner:
             tp_size=tp_size,
             dtype=get_dtype_str(torch_dtype),
             port=port,
+            impl=impl,
+            torchao_config=torchao_config,
             mem_fraction_static=mem_fraction_static,
             trust_remote_code=trust_remote_code,
             is_embedding=not self.is_generation,
