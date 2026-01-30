@@ -15,7 +15,7 @@ import os
 class TestOnlineQuantizationMemoryLoad(CustomTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model = "/mnt/fxmarty/Qwen_Qwen3-8B"
+        cls.model = "Qwen/Qwen3-8B"
 
         cls.base_url = DEFAULT_URL_FOR_TEST
         cls.stdout = io.StringIO()

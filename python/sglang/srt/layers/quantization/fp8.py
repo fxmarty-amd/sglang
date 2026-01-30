@@ -661,13 +661,18 @@ class Fp8LinearMethod(LinearMethodBase):
             weight = weight.to(torch.float32) * weight_scale
             weight = weight.to(torch.float32)
 
+            # NOTE: commenting out this section fixes the issue with CUDA graph.
+            # Similarly in the original `apply_fp8_linear`, commenting out `torch._scaled_mm` call
+            # to instead just dequantizing the weight and call `torch.mm` (no activation quant)
+            # also fixes the issue.
+            ####################
             input_2d = input.view(-1, input.shape[-1])
             x_scale = tensor_to_scale(input_2d, torch.float8_e4m3fn).float()
             qinput = to_fp8_saturated(input_2d * x_scale, torch.float8_e4m3fn)
             x_scale = 1 / x_scale
             input = qinput.to(torch.float32) * x_scale
-
             assert x_scale.dtype == weight_scale.dtype
+            ####################
 
             input = input.to(torch.float32)
 
