@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn import Module
 from torch.nn.parameter import Parameter
-
+import os
 from sglang.srt.distributed import get_tensor_model_parallel_world_size, get_tp_group
 from sglang.srt.distributed.device_communicators.pynccl_allocator import (
     use_symmetric_memory,
@@ -106,6 +106,71 @@ if _use_aiter or _use_hip_int4:
 ACTIVATION_SCHEMES = ["static", "dynamic"]
 
 logger = logging.getLogger(__name__)
+
+
+def mm_float8_emulated(x, x_scale, y, y_scale, out_dtype, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+    # naive implementation: dq -> op -> q
+    x_fp32 = x.to(torch.float) / x_scale
+    y_fp32 = y.to(torch.float) / y_scale
+    out_fp32 = torch.mm(x_fp32, y_fp32)
+    if bias is not None:
+        out_fp32 += bias.to(torch.float)
+
+    return out_fp32.to(out_dtype)
+
+
+
+def amax_to_scale(
+    amax: torch.Tensor, float8_dtype: torch.dtype, orig_dtype: torch.dtype
+):
+    """ Converts the amax value of a tensor to the fp8 scale.
+    Args:
+        amax: The amax value of the tensor.
+        float8_dtype: the float8 dtype.
+        orig_dtype: The original dtype of the tensor.
+    """
+    scale = torch.empty_like(amax, dtype=torch.float32)
+    if float8_dtype == torch.float8_e4m3fn:
+        res = E4M3_MAX_POS / torch.clamp(amax, min=EPS)
+    elif float8_dtype == torch.float8_e5m2:
+        raise ValueError()
+    else:
+        raise ValueError(f"Unsupported float8_dtype: {float8_dtype}")
+
+    # Ensure the scale is representable in float16,
+    # this helps when amax is small. We are assuming that we don't need
+    # to care about this for float32/bfloat16
+    if orig_dtype is torch.float16:
+        res = torch.clamp(res, max=torch.finfo(torch.float16).max)
+
+    scale.copy_(res)
+    return scale
+
+def tensor_to_scale(x: torch.Tensor, float8_dtype: torch.dtype, dim=None):
+    if dim is None:
+        amax = torch.max(torch.abs(x))
+    else:
+        amax = torch.max(torch.abs(x), dim=dim, keepdim=True).values
+
+    return amax_to_scale(amax, float8_dtype, x.dtype)
+
+E4M3_MAX_POS = torch.finfo(torch.float8_e4m3fn).max
+# E4M3_MAX_POS = torch.finfo(torch.float8_e4m3fn).max
+EPS = 1e-12
+
+def to_fp8_saturated(
+    x: torch.Tensor,
+    fp8_dtype: torch.dtype
+):
+    if fp8_dtype == torch.float8_e4m3fn:
+        x = x.clamp(min=-1 * E4M3_MAX_POS, max=E4M3_MAX_POS)
+    elif fp8_dtype == torch.float8_e5m2:
+        raise ValueError()
+    else:
+        raise ValueError(f"to_fp8_saturated(): Unsupported fp8_dtype: {fp8_dtype}")
+
+    return x.to(fp8_dtype)
+
 
 
 class Fp8Config(QuantizationConfig):
@@ -585,6 +650,35 @@ class Fp8LinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if os.environ.get("MINIMAL_REPRO_GRAPH", "0") == "1":
+            input = x
+            weight = layer.weight
+            weight_scale = layer.weight_scale
+            bias = bias
+
+            input_dtype = input.dtype
+
+            weight = weight.to(torch.float32) * weight_scale
+            weight = weight.to(torch.float32)
+
+            input_2d = input.view(-1, input.shape[-1])
+            x_scale = tensor_to_scale(input_2d, torch.float8_e4m3fn).float()
+            qinput = to_fp8_saturated(input_2d * x_scale, torch.float8_e4m3fn)
+            x_scale = 1 / x_scale
+            input = qinput.to(torch.float32) * x_scale
+
+            assert x_scale.dtype == weight_scale.dtype
+
+            input = input.to(torch.float32)
+
+            output = torch.mm(input, weight)
+            output = output.to(input_dtype)
+
+            if bias is not None:
+                output = output + bias
+            
+            return output
+
         if self.use_marlin:
             return apply_fp8_marlin_linear(
                 input=x,
