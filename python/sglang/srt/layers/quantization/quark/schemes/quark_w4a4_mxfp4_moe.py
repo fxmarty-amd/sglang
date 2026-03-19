@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from sglang.srt.layers.moe import MoeRunnerConfig
+from sglang.srt.layers.moe.utils import get_moe_weight_sizes
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.quantization.dequantization import (
     copy_missing_attrs,
@@ -154,10 +155,20 @@ class QuarkW4A4MXFp4MoE(QuarkMoEScheme):
                 )
             return
 
+        w13_up_dim, w2_down_dim, weight_padded = get_moe_weight_sizes(
+            intermediate_size_per_partition,
+            is_aiter_moe=True,
+            is_concat=True,
+            is_packed=True,
+        )
+
         # Add the quantization method used (per tensor/grouped/channel)
         # to ensure the weight scales are loaded in properly
         extra_weight_attrs.update(
-            {"quant_method": FusedMoeWeightScaleSupported.BLOCK.value}
+            {
+                "quant_method": FusedMoeWeightScaleSupported.BLOCK.value,
+                "weight_padded": weight_padded,
+            },
         )
 
         if self.is_checkpoint_mxfp4_serialized:
@@ -181,7 +192,7 @@ class QuarkW4A4MXFp4MoE(QuarkMoEScheme):
         # WEIGHTS
         w13_shape = (
             num_experts,
-            2 * intermediate_size_per_partition,
+            w13_up_dim,
             hidden_size // 2 if self.is_checkpoint_mxfp4_serialized else hidden_size,
         )
         w13_weight = torch.nn.Parameter(
@@ -199,11 +210,7 @@ class QuarkW4A4MXFp4MoE(QuarkMoEScheme):
         w2_shape = (
             num_experts,
             hidden_size,
-            (
-                intermediate_size_per_partition // 2
-                if self.is_checkpoint_mxfp4_serialized
-                else intermediate_size_per_partition
-            ),
+            w2_down_dim,
         )
         w2_weight = torch.nn.Parameter(
             torch.empty(
@@ -221,7 +228,7 @@ class QuarkW4A4MXFp4MoE(QuarkMoEScheme):
         w13_weight_scale = torch.nn.Parameter(
             torch.ones(
                 num_experts,
-                2 * intermediate_size_per_partition,
+                w13_up_dim,
                 hidden_size // OCP_MX_BLOCK_SIZE,
                 dtype=params_dtype,
             ),
